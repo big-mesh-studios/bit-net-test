@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.vite/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Local tool cache and cloned upstream sources
+.cache/
+
+# Emscripten output (regenerate with `npm run build:wasm`)
+public/wasm/bitnet.js
+public/wasm/bitnet.wasm
+
+# Accidental default emcc output
+a.out.js
+a.out.wasm
+
+# Local environment
+.env
+.env.*
+
+# Editors and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

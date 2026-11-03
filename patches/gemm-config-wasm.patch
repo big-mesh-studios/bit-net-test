@@ -1,0 +1,21 @@
+diff --git a/include/gemm-config.h b/include/gemm-config.h
+index 6a88c42..d56a8fb 100644
+--- a/include/gemm-config.h
++++ b/include/gemm-config.h
+@@ -33,2 +33,16 @@
+ #endif // __ARM_FEATURE_DOTPROD
++#elif defined(__wasm_simd128__)
++#if defined(ACT_PARALLEL)
++    #define ROW_BLOCK_SIZE 4
++    #define COL_BLOCK_SIZE 32
++    #define PARALLEL_SIZE 4
++#else
++    #define ROW_BLOCK_SIZE 16
++    #define COL_BLOCK_SIZE 16
++    #define PARALLEL_SIZE 4
++#endif
++#else
++    #define ROW_BLOCK_SIZE 16
++    #define COL_BLOCK_SIZE 16
++    #define PARALLEL_SIZE 4
+ #endif // __AVX__

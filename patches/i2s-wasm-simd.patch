@@ -1,0 +1,110 @@
+diff --git a/ggml/src/ggml-cpu/quants.c b/ggml/src/ggml-cpu/quants.c
+index 603f51c..96537d8 100644
+--- a/ggml/src/ggml-cpu/quants.c
++++ b/ggml/src/ggml-cpu/quants.c
+@@ -1486,20 +1486,96 @@ static void ggml_vec_dot_i2_i8_s_1x1(int n, float * s, size_t bs, const void * v
+         int sumi = hsum_i32_8(accu);
+         s[row] = (float)sumi;
+     }
++#elif defined(__wasm_simd128__)
++    // I2_S is stored as four 32-element bit-planes per 128-element block:
++    // byte j of a block holds weights j, 32+j, 64+j and 96+j in bits 7:6,
++    // 5:4, 3:2 and 1:0.  The caller subtracts sum(y) afterwards, so this
++    // kernel returns sum(code * y) with code in {0,1,2}.
++    //
++    // GEMV passes by == 0 and uses nrc weight rows against one activation
++    // vector; the GEMM path passes by == n and uses nrc activation columns
++    // against one weight row.  bs is the output stride in both cases.
++    const uint8_t * x = (const uint8_t *)vx;
++    const int8_t  * y = (const int8_t *)vy;
++    const int nb = n / QK_I2_S;
++    const v128_t mask = wasm_i8x16_splat(0x03);
++    const v128_t ones = wasm_i16x8_splat(1);
++    const int rows_are_act = (by != 0);
++
++    for (int row = 0; row < nrc; row++) {
++        const uint8_t * x_row = rows_are_act ? x : x + row * (bx / 4);
++        const int8_t  * y_row = y + row * by;
++        v128_t acc = wasm_i32x4_splat(0);
++
++        for (int bl = 0; bl < nb; bl++) {
++            const uint8_t * xp = x_row + bl * 32;
++            const int8_t  * yp = y_row + bl * QK_I2_S;
++            v128_t sum16 = wasm_i16x8_splat(0);
++
++            for (int half = 0; half < 2; half++) {
++                const v128_t xv = wasm_v128_load(xp + half * 16);
++                const v128_t c0 = wasm_v128_and(wasm_u16x8_shr(xv, 6), mask);
++                const v128_t c1 = wasm_v128_and(wasm_u16x8_shr(xv, 4), mask);
++                const v128_t c2 = wasm_v128_and(wasm_u16x8_shr(xv, 2), mask);
++                const v128_t c3 = wasm_v128_and(xv, mask);
++                const int8_t * y0 = yp + half * 16;
++                const int8_t * y1 = y0 + 32;
++                const int8_t * y2 = y0 + 64;
++                const int8_t * y3 = y0 + 96;
++
++                sum16 = wasm_i16x8_add(sum16, wasm_i16x8_extmul_low_i8x16 (c0, wasm_v128_load(y0)));
++                sum16 = wasm_i16x8_add(sum16, wasm_i16x8_extmul_high_i8x16(c0, wasm_v128_load(y0)));
++                sum16 = wasm_i16x8_add(sum16, wasm_i16x8_extmul_low_i8x16 (c1, wasm_v128_load(y1)));
++                sum16 = wasm_i16x8_add(sum16, wasm_i16x8_extmul_high_i8x16(c1, wasm_v128_load(y1)));
++                sum16 = wasm_i16x8_add(sum16, wasm_i16x8_extmul_low_i8x16 (c2, wasm_v128_load(y2)));
++                sum16 = wasm_i16x8_add(sum16, wasm_i16x8_extmul_high_i8x16(c2, wasm_v128_load(y2)));
++                sum16 = wasm_i16x8_add(sum16, wasm_i16x8_extmul_low_i8x16 (c3, wasm_v128_load(y3)));
++                sum16 = wasm_i16x8_add(sum16, wasm_i16x8_extmul_high_i8x16(c3, wasm_v128_load(y3)));
++            }
++
++            acc = wasm_i32x4_add(acc, wasm_i32x4_dot_i16x8(sum16, ones));
++        }
++
++        int32_t sum = wasm_i32x4_extract_lane(acc, 0) + wasm_i32x4_extract_lane(acc, 1) +
++                      wasm_i32x4_extract_lane(acc, 2) + wasm_i32x4_extract_lane(acc, 3);
++
++        for (int i = nb * QK_I2_S; i < n; i++) {
++            const int e = i - nb * QK_I2_S;
++            const int sub = e / 32;
++            const int gp = e % 32;
++            sum += ((x_row[nb * 32 + gp] >> (6 - 2 * sub)) & 0x03) * y_row[i];
++        }
++
++        s[row * bs] = (float)sum;
++    }
+ #else
+-    // Scalar fallback
++    // Scalar fallback (same blocked layout as the SIMD path).
+     const uint8_t * x = (const uint8_t *)vx;
+-    const int8_t * y  = (const int8_t *)vy;
+-    static const int map2bit[4] = { -1, 0, 1, 0 };
++    const int8_t  * y = (const int8_t *)vy;
++    const int nb = n / QK_I2_S;
++    const int rows_are_act = (by != 0);
+     for (int row = 0; row < nrc; row++) {
++        const uint8_t * x_row = rows_are_act ? x : x + row * (bx / 4);
++        const int8_t  * y_row = y + row * by;
+         int32_t sum = 0;
+-        for (int i = 0; i < n; i++) {
+-            int byte_idx = i / 4;
+-            int bit_pos = 6 - 2 * (i % 4);
+-            int w = map2bit[(x[row * (n/4) + byte_idx] >> bit_pos) & 0x03];
+-            sum += w * y[i];
++        for (int bl = 0; bl < nb; bl++) {
++            const uint8_t * xp = x_row + bl * 32;
++            const int8_t  * yp = y_row + bl * QK_I2_S;
++            for (int j = 0; j < 32; j++) {
++                const uint8_t byte = xp[j];
++                sum += ((byte >> 6) & 0x03) * yp[j];
++                sum += ((byte >> 4) & 0x03) * yp[32 + j];
++                sum += ((byte >> 2) & 0x03) * yp[64 + j];
++                sum += ((byte >> 0) & 0x03) * yp[96 + j];
++            }
++        }
++        for (int i = nb * QK_I2_S; i < n; i++) {
++            const int e = i - nb * QK_I2_S;
++            const int sub = e / 32;
++            const int gp = e % 32;
++            sum += ((x_row[nb * 32 + gp] >> (6 - 2 * sub)) & 0x03) * y_row[i];
+         }
+-        s[row] = (float)sum;
++        s[row * bs] = (float)sum;
+     }
+ #endif
+ }
