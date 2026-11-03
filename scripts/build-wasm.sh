@@ -66,6 +66,16 @@ if ! grep -q "__wasm_simd128__" "$SRC/3rdparty/llama.cpp/ggml/src/ggml-cpu/quant
   git -C "$SRC/3rdparty/llama.cpp" apply "$ROOT/patches/i2s-wasm-simd.patch"
 fi
 
+# The pinned llama.cpp has two correctness bugs for Microsoft's b1.58
+# checkpoints: the FFN uses SiLU instead of ReLU², and the official GGUF omits
+# tokenizer.ggml.pre, so the tokenizer falls back to the GPT-2 pre-tokenizer.
+# Both are model-level issues that affect every backend, not just WASM.
+if ! grep -qF "LLM_ARCH_BITNET_B158 ? LLM_FFN_RELU_SQR" \
+    "$SRC/3rdparty/llama.cpp/src/models/bitnet.cpp"; then
+  echo "==> Applying patches/bitnet-inference-fixes.patch"
+  git -C "$SRC/3rdparty/llama.cpp" apply "$ROOT/patches/bitnet-inference-fixes.patch"
+fi
+
 # ---------------------------------------------------------------------------
 # 3. Configure and build llama.cpp as a static wasm32 library.
 #

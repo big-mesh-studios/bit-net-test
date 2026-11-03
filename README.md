@@ -28,8 +28,9 @@ npm run build:wasm
 ```
 
 The script clones the pinned BitNet and llama.cpp revisions into `.cache/` on
-first run, applies `patches/gemm-config-wasm.patch` and
-`patches/i2s-wasm-simd.patch`, builds the static wasm32 libraries, and writes:
+first run, applies `patches/gemm-config-wasm.patch`,
+`patches/i2s-wasm-simd.patch` and `patches/bitnet-inference-fixes.patch`,
+builds the static wasm32 libraries, and writes:
 
 ```
 public/wasm/bitnet.js
@@ -115,6 +116,12 @@ scripts/build-wasm.sh         reproducible WASM build
 
 ## Notes
 
+- `patches/bitnet-inference-fixes.patch` corrects two upstream bugs that make the
+  published checkpoint produce much worse text than the reference implementation:
+  the BitNet FFN was built with SiLU instead of ReLU² (the model's `config.json`
+  declares `"hidden_act": "relu2"`), and the official GGUF does not set
+  `tokenizer.ggml.pre`, so llama.cpp silently falls back to the GPT-2
+  pre-tokenizer instead of LLaMA 3's `llama-bpe`.
 - Weights are 2-bit I2_S and activations are int8 (W2A8) integer dot products. The
   prompt format is `User: ...<|eot_id|>Assistant: `, matching the model's
   training data rather than the GGUF's embedded chat template.
