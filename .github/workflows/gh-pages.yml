@@ -1,0 +1,75 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages
+  cancel-in-progress: true
+
+env:
+  EM_VERSION: 3.1.74
+  EM_CACHE_FOLDER: emsdk-cache
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cache Emscripten
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.EM_CACHE_FOLDER }}
+          key: emsdk-${{ runner.os }}-${{ env.EM_VERSION }}
+
+      - name: Set up Emscripten
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: ${{ env.EM_VERSION }}
+          actions-cache-folder: ${{ env.EM_CACHE_FOLDER }}
+
+      # The build script pins the BitNet and llama.cpp revisions. Keying the
+      # cache on the script and the patches means a patch change starts from a
+      # clean clone instead of reusing a tree with the old patch applied.
+      - name: Cache pinned BitNet sources
+        uses: actions/cache@v6
+        with:
+          path: .cache/bitnet-src
+          key: bitnet-src-${{ runner.os }}-${{ hashFiles('scripts/build-wasm.sh', 'patches/*.patch') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the WASM runtime
+        run: npm run build:wasm
+
+      - name: Build the site
+        run: npm run build
+
+      - name: Verify the deployment contains the runtime and the worker
+        run: |
+          test -f dist/wasm/bitnet.js
+          test -f dist/wasm/bitnet.wasm
+          test -f dist/coi-serviceworker.js
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          enable_jekyll: false

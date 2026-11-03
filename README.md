@@ -60,10 +60,21 @@ the origin root or under any subfolder.
 
 ## Deploy to GitHub Pages
 
-1. Run `npm run build:wasm`.
-2. Run `npm run build`.
-3. Publish the contents of `dist/` (for example with the `gh-pages` branch or an
-   Actions workflow).
+`.github/workflows/gh-pages.yml` does this on every push to `main` (and on
+manual dispatch):
+
+1. Set up Node 22 and Emscripten 3.1.74.
+2. Restore the pinned BitNet/llama.cpp checkout and Emscripten caches.
+3. Run `npm run build:wasm`.
+4. Run `npm run build`.
+5. Publish `dist/` to the `gh-pages` branch.
+
+In the repository settings, set **Pages -> Source** to **Deploy from a branch**
+and choose `gh-pages` / `(root)`.
+
+`.github/workflows/ci.yml` runs the typecheck and the production build (without
+Emscripten, since the WASM is resolved at runtime) on pull requests and pushes
+to `main`.
 
 No server header configuration is required. GitHub Pages cannot send COOP/COEP,
 so `public/coi-serviceworker.js` adds them at runtime. The worker is registered
